@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>魔法の鏡 - Magic Mirror AI</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #050508;
+      color: #ffffff;
+      font-family: "Georgia", "游明朝", serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 1.8rem;
+      letter-spacing: 2px;
+      color: #d4af37;
+      text-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+    }
+
+    /* 鏡のフレームデザイン */
+    .mirror-frame {
+      position: relative;
+      width: 320px;
+      height: 460px;
+      border: 12px solid #3a2e1d;
+      outline: 4px solid #d4af37;
+      border-radius: 160px / 230px;
+      box-shadow: 0 0 30px rgba(212, 175, 55, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.8);
+      background: radial-gradient(circle, #1a1a24 0%, #050508 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* 鏡に浮かぶ魔女の顔（画像）。鏡の楕円いっぱいに広げ、中央の顔が見えるように切り抜く */
+    .witch-face {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center 45%;
+      opacity: 0;
+      transform: scale(1.15);
+      filter: blur(12px) brightness(0.3);
+      transition: opacity 2s ease-in-out, transform 2.5s ease-out, filter 2.5s ease-out;
+    }
+
+    /* 魔女が出現したとき：暗く、ぼやけた奥から浮かび上がる */
+    .witch-face.active {
+      opacity: 1;
+      transform: scale(1);
+      filter: blur(0) brightness(1);
+    }
+
+    /* 鏡の光沢エフェクト */
+    .mirror-glass {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 50%);
+      pointer-events: none;
+      z-index: 1; /* 光沢を顔の画像より手前に重ねる */
+    }
+
+    /* セリフ表示エリア */
+    .subtitle {
+      margin-top: 30px;
+      font-size: 1.3rem;
+      color: #e0e0e0;
+      min-height: 3em;
+      text-align: center;
+      padding: 0 20px;
+      text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+    }
+
+    /* 音声入力ボタン */
+    .btn-talk {
+      margin-top: 20px;
+      padding: 12px 30px;
+      font-size: 1rem;
+      background: linear-gradient(135deg, #4a00e0, #8e2de2);
+      color: white;
+      border: 1px solid #d4af37;
+      border-radius: 25px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(142, 45, 226, 0.4);
+      transition: all 0.3s;
+    }
+
+    .btn-talk:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(142, 45, 226, 0.6);
+    }
+    .btn-talk:disabled {
+      opacity: 0.5;
+      cursor: default;
+      transform: none;
+    }
+
+    .diag {
+      margin-top: 14px;
+      max-width: 90vw;
+      font-size: 0.8rem;
+      color: #a0a0b0;
+      text-align: center;
+      min-height: 1.2em;
+    }
+
+    .meter {
+      margin-top: 12px;
+      width: 220px;
+      height: 8px;
+      border: 1px solid #555;
+      border-radius: 4px;
+      overflow: hidden;
+      visibility: hidden;
+    }
+    .meter.show { visibility: visible; }
+    .meter-bar {
+      height: 100%;
+      width: 0%;
+      background: #00ffaa;
+      transition: width 0.05s linear;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Magic Mirror</h1>
+
+  <div class="mirror-frame">
+    <div class="mirror-glass"></div>
+    
+    <!-- 鏡に浮かび上がる魔女の顔 -->
+    <img class="witch-face" id="witch" src="images/mirror-witch.jpg" alt="鏡に映る魔女">
+  </div>
+
+  <div class="subtitle" id="subtitle">「鏡よ、鏡…」と話しかけてください</div>
+  
+  <button class="btn-talk" id="talkBtn" onclick="startListening()">🎤 鏡に話しかける</button>
+
+  <div class="meter" id="meter"><div class="meter-bar" id="meterBar"></div></div>
+  <div class="diag" id="diag"></div>
+
+  <script>
+    const witch = document.getElementById('witch');
+    const subtitle = document.getElementById('subtitle');
+    const diag = document.getElementById('diag');
+    const talkBtn = document.getElementById('talkBtn');
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let listening = false;
+    let gotResult = false;
+
+    // マイク入力レベル表示（PCのみ。Android / iPhone はマイクを同時に掴めないため使わない）
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    // iPadOS は Mac として名乗るため、タッチ対応かどうかでも判定する
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isMobile = isAndroid || isIOS;
+    const isWindows = /Windows/i.test(navigator.userAgent);
+    const isMac = !isIOS && /Macintosh|Mac OS X/i.test(navigator.userAgent);
+
+    // 端末ごとに案内文を切り替える（該当がなければ other を使う）
+    function byPlatform(m) {
+      if (isIOS) return m.ios ?? m.other;
+      if (isAndroid) return m.android ?? m.other;
+      if (isWindows) return m.windows ?? m.other;
+      if (isMac) return m.mac ?? m.other;
+      return m.other;
+    }
+    const meter = document.getElementById('meter');
+    const meterBar = document.getElementById('meterBar');
+    let meterStream = null;
+    let audioCtx = null;
+    let meterRaf = 0;
+    let peakLevel = 0;
+    let micLabel = '';
+
+    function startMeter(stream) {
+      meterStream = stream;
+      peakLevel = 0;
+      micLabel = (stream.getAudioTracks()[0] || {}).label || '不明';
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        src.connect(analyser);
+        const buf = new Float32Array(analyser.fftSize);
+        meter.classList.add('show');
+        const tick = () => {
+          analyser.getFloatTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const rms = Math.sqrt(sum / buf.length);
+          peakLevel = Math.max(peakLevel, rms);
+          meterBar.style.width = Math.min(100, rms * 400) + '%';
+          meterRaf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (e) {
+        // メーターが使えなくても認識は続ける
+      }
+      diag.textContent = "使用中のマイク: " + micLabel;
+    }
+
+    function stopMeter() {
+      cancelAnimationFrame(meterRaf);
+      meter.classList.remove('show');
+      meterBar.style.width = '0%';
+      if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+      if (meterStream) { meterStream.getTracks().forEach(t => t.stop()); meterStream = null; }
+    }
+
+    function noSpeechAdvice() {
+      if (isMobile || !micLabel) return ERROR_MESSAGES['no-speech'];
+      if (peakLevel < 0.01) {
+        return "マイク「" + micLabel + "」からほとんど音が入っていません。マイクのミュート、音量、または別のマイクが選ばれていないか確認してください。";
+      }
+      return "マイク「" + micLabel + "」は音を拾っていますが、音声認識に届いていません。" + byPlatform({
+        windows: "Windowsの「設定 > システム > サウンド > 入力」でこのマイクを既定にして、ブラウザを再起動してください。",
+        mac: "Macの「システム設定 > サウンド > 入力」でこのマイクを選んで、ブラウザを再起動してください。",
+        other: "OSのサウンド設定でこのマイクを入力に選んで、ブラウザを再起動してください。"
+      });
+    }
+
+    // 起動時の環境チェック
+    (function checkEnvironment() {
+      if (!SpeechRecognition) {
+        subtitle.textContent = "お使いのブラウザは音声認識に対応していません。" + byPlatform({
+          ios: "Safari で開いてください（iOS 14.5 以降が必要です）。",
+          android: "Chrome で開いてください。",
+          windows: "Chrome か Edge で開いてください。",
+          mac: "Chrome、Edge、Safari のいずれかで開いてください。",
+          other: "（Windows: Chrome / Edge、Android: Chrome、iPhone: Safari を使ってください）"
+        });
+        talkBtn.disabled = true;
+        return;
+      }
+      if (location.protocol === 'file:') {
+        diag.textContent = "※ファイルを直接開いています。マイクが使えない場合は https:// のURL（GitHub Pages など）か http://localhost で開いてください。";
+      } else if (!window.isSecureContext) {
+        diag.textContent = "※ http:// ではマイクが使えません。https:// のURLで開いてください。";
+      }
+    })();
+
+    const ERROR_MESSAGES = {
+      'not-allowed': "マイクの使用が許可されていません。" + byPlatform({
+        ios: "iPhoneの「設定 > Safari > マイク」（iOS 18 以降は「設定 > アプリ > Safari > マイク」）を「確認」か「許可」にして、ページを再読み込みしてください。",
+        android: "アドレスバー左のアイコン →「権限」からマイクを「許可」にしてください。",
+        other: "アドレスバー左のアイコンからマイクを「許可」にしてください。"
+      }),
+      'service-not-allowed': "ブラウザ側で音声認識が許可されていません。" + byPlatform({
+        ios: "https:// で開いているか、Safari を使っているか、「設定 > 一般 > キーボード」で「音声入力」がオンになっているか確認してください。",
+        android: "https:// で開いているか、Chrome を使っているか確認してください。",
+        other: "https:// で開いているか、Chrome か Edge を使っているか確認してください。"
+      }),
+      'audio-capture': "マイクが見つからないか、使用できません。" + byPlatform({
+        ios: "通話中でないか確認し、Safari を一度閉じてから開き直してください。",
+        android: "通話中でないか確認し、Chrome を一度閉じてから開き直してください。",
+        other: "マイクの接続と、OSのマイク設定を確認してください。"
+      }),
+      'no-speech': "声が聞こえませんでした。マイクに近づいて、もう一度話しかけてください。",
+      'network': "音声認識サーバーに接続できません。インターネット接続を確認してください。",
+      'language-not-supported': "日本語の音声認識が使えません。" + byPlatform({
+        ios: "「設定 > 一般 > キーボード」で日本語キーボードと「音声入力」が有効か確認してください。",
+        android: "Google アプリと音声入力の言語設定を確認してください。",
+        other: "ブラウザとOSの言語設定に日本語が入っているか確認してください。"
+      }),
+      'aborted': "音声認識が中断されました。もう一度試してください。"
+    };
+
+    // マイクの権限とデバイスを先に確認する（原因を特定しやすくするため）
+    async function checkMicrophone() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return true; // 確認できない環境では音声認識側に任せる
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (isMobile) {
+          // すぐに解放する（Android / iPhone では掴んだままだと音声認識がマイクを使えない）
+          stream.getTracks().forEach(t => t.stop());
+        } else {
+          startMeter(stream);
+        }
+        return true;
+      } catch (e) {
+        const msg = {
+          NotAllowedError: ERROR_MESSAGES['not-allowed'] + byPlatform({
+            windows: "（Windows の「設定 > プライバシーとセキュリティ > マイク」でブラウザへのアクセスも確認）",
+            mac: "（Mac の「システム設定 > プライバシーとセキュリティ > マイク」でブラウザへのアクセスも確認）",
+            other: ""
+          }),
+          SecurityError: ERROR_MESSAGES['not-allowed'],
+          NotFoundError: "マイクが見つかりません。" + byPlatform({
+            ios: "Safari を一度閉じてから開き直してください。",
+            android: "Chrome を一度閉じてから開き直してください。",
+            other: "マイクを接続してください。"
+          }),
+          NotReadableError: "マイクが他のアプリ（通話、Zoom、Teams など）に使われているか、OSに遮断されています。"
+        }[e.name] || ("マイクを使用できません：" + e.name);
+        subtitle.textContent = msg;
+        diag.textContent = "詳細: " + e.name + (e.message ? " / " + e.message : "");
+        return false;
+      }
+    }
+
+    function createRecognition() {
+      const r = new SpeechRecognition();
+      r.lang = 'ja-JP';
+      r.interimResults = false;
+      r.continuous = false;
+      r.maxAlternatives = 1;
+
+      r.onstart = () => {
+        listening = true;
+        gotResult = false;
+        talkBtn.disabled = true;
+        subtitle.textContent = "（聴いています…「一番美しいのは誰？」）";
+      };
+
+      r.onresult = (event) => {
+        const last = event.results[event.results.length - 1];
+        if (!last || !last.isFinal) return;
+        gotResult = true;
+        const text = last[0].transcript;
+        subtitle.textContent = `「${text}」`;
+        setTimeout(() => respondToUser(text), 800);
+      };
+
+      r.onerror = (event) => {
+        gotResult = true; // onend で別メッセージを上書きしない
+        subtitle.textContent = event.error === 'no-speech'
+          ? noSpeechAdvice()
+          : (ERROR_MESSAGES[event.error] || "声が届きませんでした。もう一度試してください。");
+        diag.textContent = "エラー種別: " + event.error
+          + (micLabel ? " / マイク: " + micLabel + " / 最大入力: " + peakLevel.toFixed(3) : "")
+          + (event.message ? " / " + event.message : "");
+      };
+
+      r.onend = () => {
+        listening = false;
+        talkBtn.disabled = false;
+        if (!gotResult) {
+          subtitle.textContent = noSpeechAdvice();
+        }
+        stopMeter();
+      };
+
+      return r;
+    }
+
+    async function startListening() {
+      if (!SpeechRecognition || listening) return;
+
+      witch.classList.remove('active');
+      // await より前（ボタンを押した直後）に呼ぶこと。iPhone ではここで解錠しないと後で喋れない
+      unlockSpeech();
+      diag.textContent = "";
+      subtitle.textContent = "（マイクを準備しています…）";
+
+      const ok = await checkMicrophone();
+      if (!ok) return;
+
+      // 毎回新しく作る（使い回すと Android Chrome で2回目以降動かないことがある）
+      if (recognition) {
+        try { recognition.abort(); } catch (e) {}
+      }
+      recognition = createRecognition();
+      try {
+        recognition.start();
+      } catch (e) {
+        stopMeter();
+        subtitle.textContent = "音声認識を開始できませんでした。もう一度押してください。";
+        diag.textContent = "詳細: " + e.name + " / " + e.message;
+      }
+    }
+
+    // 美しさについて質問された場合の回答
+    const BEAUTY_ANSWERS = [
+      "女王様、もちろんあなたでございます。",
+      "女王様、あなたは大変お美しい。しかし、白雪姫にはかないません。",
+      "鏡に映るあなたのお姿は、まことに美しいものでございます。",
+      "それは難しい質問でございます。少しお待ちください……。",
+      "女王様、白雪姫をご存じですか？あのかたこそ、この世で一番美しいお方です。",
+      "女王様、あなたの美しさは誰もが認めるところでございます。",
+      "ふふふ……。鏡は嘘をつくことができません。",
+      "女王様、真実をお聞きになりたいのでございますね？"
+    ];
+
+    // その他の質問に対する回答
+    const GENERAL_ANSWERS = [
+      "ほほほ……。面白い質問でございますね。",
+      "鏡に映るものは、すべて真実でございます。",
+      "女王様、もう一度お聞かせください。",
+      "私は魔法の鏡。何でも知っております。",
+      "ふむ……。それは興味深いことでございます。",
+      "女王様、あなたの願いを聞きましょう。",
+      "ほほほ……。この鏡には秘密がございます。",
+      "少し考えさせてくださいませ。"
+    ];
+
+    // この言葉が質問に含まれていたら「美しさ」の回答グループを使う
+    const BEAUTY_KEYWORDS = ['美しい', 'きれい', '誰'];
+
+    function chooseAnswer(userText) {
+      const answers = BEAUTY_KEYWORDS.some(word => userText.includes(word))
+        ? BEAUTY_ANSWERS
+        : GENERAL_ANSWERS;
+      return answers[Math.floor(Math.random() * answers.length)];
+    }
+
+    // 鏡の応答処理
+    function respondToUser(userText) {
+      const answerText = chooseAnswer(userText);
+      witch.classList.add('active');
+      subtitle.textContent = answerText;
+      speak(answerText);
+    }
+
+    // 日本語の声を探す（iPhone などでは声の一覧が後から読み込まれるため、変化したら取り直す）
+    let jaVoice = null;
+    function pickJaVoice() {
+      if (!('speechSynthesis' in window)) return;
+      jaVoice = window.speechSynthesis.getVoices()
+        .find(v => v.lang && v.lang.replace('_', '-').startsWith('ja')) || jaVoice;
+    }
+    if ('speechSynthesis' in window) {
+      pickJaVoice();
+      window.speechSynthesis.addEventListener('voiceschanged', pickJaVoice);
+    }
+
+    // iPhone の Safari は、ボタン操作の直後に一度でも喋らせないと
+    // 後から（通信待ちのあとなど）speak() しても音が出ない。無音の発話で解錠しておく
+    function unlockSpeech() {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const silent = new SpeechSynthesisUtterance(' ');
+      silent.volume = 0;
+      window.speechSynthesis.speak(silent);
+    }
+
+    // 音声合成（喋る機能）
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+
+        const uttr = new SpeechSynthesisUtterance(text);
+        uttr.lang = 'ja-JP';
+        if (!jaVoice) pickJaVoice();
+        if (jaVoice) uttr.voice = jaVoice;
+
+        // 低めのトーンで少しゆっくり（魔法の鏡らしさを演出）
+        uttr.pitch = 0.6;
+        uttr.rate = 0.85;
+
+        window.speechSynthesis.speak(uttr);
+      }
+    }
+  </script>
+</body>
+</html>
