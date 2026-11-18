@@ -16,11 +16,14 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      overflow: hidden;
+      min-height: 100dvh; /* Android のアドレスバーを除いた実際の表示高さ */
+      box-sizing: border-box;
+      padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+      /* 画面に収まらない場合でもスクロールしてボタンを押せるよう overflow は隠さない */
     }
 
     h1 {
-      margin-bottom: 20px;
+      margin: 0 0 16px;
       font-size: 1.8rem;
       letter-spacing: 2px;
       color: #d4af37;
@@ -30,17 +33,24 @@
     /* 鏡のフレームデザイン */
     .mirror-frame {
       position: relative;
-      width: 320px;
-      height: 460px;
+      /* 画面の高さ・幅に合わせて縮む（最大 320×460、縦横比は固定） */
+      --mirror-h: min(460px, 45vh, 115vw);
+      flex-shrink: 0;
+      height: var(--mirror-h);
+      width: calc(var(--mirror-h) * 320 / 460);
       border: 12px solid #3a2e1d;
       outline: 4px solid #d4af37;
-      border-radius: 160px / 230px;
+      border-radius: 50%;
       box-shadow: 0 0 30px rgba(212, 175, 55, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.8);
       background: radial-gradient(circle, #1a1a24 0%, #050508 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
+    }
+
+    @supports (height: 1dvh) {
+      .mirror-frame { --mirror-h: min(460px, 45dvh, 115vw); }
     }
 
     /* 鏡に浮かぶ魔女の顔（画像）。鏡の楕円いっぱいに広げ、中央の顔が見えるように切り抜く */
@@ -78,7 +88,7 @@
 
     /* セリフ表示エリア */
     .subtitle {
-      margin-top: 30px;
+      margin-top: 20px;
       font-size: 1.3rem;
       color: #e0e0e0;
       min-height: 3em;
