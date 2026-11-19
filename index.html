@@ -250,8 +250,38 @@
       });
     }
 
+    // LINE のアプリ内ブラウザはマイクが使えない（NotAllowedError になる）。
+    // URL に openExternalBrowser=1 を付けると、LINE が Chrome / Safari で開き直してくれる
+    const isLineApp = /\bLine\//i.test(navigator.userAgent);
+    // その他のアプリ内ブラウザ（Instagram、Facebook、Android の WebView など）
+    const isInAppBrowser = isLineApp
+      || /FBAN|FBAV|Instagram|Twitter/i.test(navigator.userAgent)
+      || (isAndroid && /; wv\)/.test(navigator.userAgent));
+    const OPEN_IN_BROWSER = "LINE などのアプリの中で開くとマイクが使えません。" + byPlatform({
+      ios: "右上（または右下）のメニューから「Safari で開く」を選んでください。",
+      android: "右上のメニュー（︙）から「ブラウザで開く」/「Chrome で開く」を選んでください。",
+      other: "メニューから「ブラウザで開く」を選んでください。"
+    });
+    let redirectingToBrowser = false;
+    if (isLineApp) {
+      const url = new URL(location.href);
+      if (!url.searchParams.has('openExternalBrowser')) {
+        url.searchParams.set('openExternalBrowser', '1');
+        redirectingToBrowser = true;
+        location.replace(url.toString());
+      }
+    }
+
     // 起動時の環境チェック
     (function checkEnvironment() {
+      if (redirectingToBrowser) {
+        subtitle.textContent = "ブラウザで開き直しています…";
+        return;
+      }
+      if (isInAppBrowser) {
+        subtitle.textContent = OPEN_IN_BROWSER;
+        return;
+      }
       if (!SpeechRecognition) {
         subtitle.textContent = "お使いのブラウザは音声認識に対応していません。" + byPlatform({
           ios: "Safari で開いてください（iOS 14.5 以降が必要です）。",
@@ -311,7 +341,9 @@
         }
         return true;
       } catch (e) {
-        const msg = {
+        const msg = (isInAppBrowser && (e.name === 'NotAllowedError' || e.name === 'SecurityError'))
+          ? OPEN_IN_BROWSER
+          : {
           NotAllowedError: ERROR_MESSAGES['not-allowed'] + byPlatform({
             windows: "（Windows の「設定 > プライバシーとセキュリティ > マイク」でブラウザへのアクセスも確認）",
             mac: "（Mac の「システム設定 > プライバシーとセキュリティ > マイク」でブラウザへのアクセスも確認）",
@@ -324,7 +356,7 @@
             other: "マイクを接続してください。"
           }),
           NotReadableError: "マイクが他のアプリ（通話、Zoom、Teams など）に使われているか、OSに遮断されています。"
-        }[e.name] || ("マイクを使用できません：" + e.name);
+          }[e.name] || ("マイクを使用できません：" + e.name);
         subtitle.textContent = msg;
         diag.textContent = "詳細: " + e.name + (e.message ? " / " + e.message : "");
         return false;
